@@ -16,18 +16,18 @@
 
 - name: Describe environment
   cloudera.cloud.env_info:
-    name: "{{ cdp.environment }}"
+    name: "{{ single_az_environment }}"
   register: __env
 
 - name: Test for Environment existence
   ansible.builtin.assert:
     that: __env.environments | length == 0
-    fail_msg: "Test environment already exists: {{ cdp.environment }}"
+    fail_msg: "Test environment already exists: {{ single_az_environment }}"
 
 - name: Create a new AWS environment
   when: network.type == "aws"
   cloudera.cloud.env:
-    name: "{{ cdp.environment }}"
+    name: "{{ single_az_environment }}"
     cloud: "{{ network.type }}"
     credential: "{{ cdp.xaccount_credential }}"
     region: "{{ network.region }}"
@@ -44,10 +44,33 @@
   ansible.builtin.assert:
     that:
       - __env.environment | length > 0
-  
+
+- name: Test idempotent creation of a AWS environment
+  when: network.type == "aws"
+  cloudera.cloud.env:
+    name: "{{ single_az_environment }}"
+    cloud: "{{ network.type }}"
+    credential: "{{ cdp.xaccount_credential }}"
+    region: "{{ network.region }}"
+    public_key_id: "{{ ssh.name }}"
+    vpc_id: "{{ network.vpc }}"
+    subnet_ids: "{{ network.public_subnets | union(network.private_subnets) }}"
+    default_sg: "{{ security.default_group }}"
+    knox_sg: "{{ security.knox_group }}"
+    log_identity: "{{ identity.log_role }}"
+    log_location: "{{ storage.log_location }}"
+  register: __env_idempotent
+
+- name: Test for Environment idempotent state
+  ansible.builtin.assert:
+    that:
+      - __env_idempotent.environment | length > 0
+      - __env.environment.crn == __env_idempotent.environment.crn
+      - not __env_idempotent.changed
+
 - name: Destroy the Environment
   cloudera.cloud.env:
-    name: "{{ cdp.environment }}"
+    name: "{{ single_az_environment }}"
     state: absent
   register: __env
 
@@ -58,10 +81,10 @@
 
 - name: Describe environment
   cloudera.cloud.env_info:
-    name: "{{ cdp.environment }}"
+    name: "{{ single_az_environment }}"
   register: __env
 
 - name: Test for Environment destruction
   ansible.builtin.assert:
     that: __env.environments | length == 0
-    fail_msg: "Test environment was not destroyed: {{ cdp.environment }}"
+    fail_msg: "Test environment was not destroyed: {{ single_az_environment }}"
