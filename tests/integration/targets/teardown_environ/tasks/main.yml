@@ -17,7 +17,7 @@
 - name: Destroy integration testing multi-AZ Environment
   cloudera.cloud.env:
     name: "{{ environment_multi_az }}"
-    cascade: yespush
+    cascade: yes
     state: absent
   register: __env_multi_az
 
