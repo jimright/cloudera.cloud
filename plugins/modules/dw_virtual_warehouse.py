@@ -76,12 +76,47 @@ options:
       - small
       - medium
       - large
-  autoscaling_min_nodes:
-    description: The minimum number of available nodes for Virtual Warehouse autoscaling.
-    type: int
-  autoscaling_max_nodes:
-    description: The maximum number of available nodes for Virtual Warehouse autoscaling.
-    type: int
+  autoscaling:
+    description:
+      - Auto-scaling configuration for a Virtual Warehouse
+    type: dict
+    elements: dict
+    required: False
+    suboptions:      
+      min_nodes:
+        description: The minimum number of available nodes for Virtual Warehouse autoscaling.
+        type: int
+      max_nodes:
+        description: The maximum number of available nodes for Virtual Warehouse autoscaling.
+        type: int
+      auto_suspend_timeout_seconds:
+        description: Auto suspend threshold for Virtual Warehouse.
+        type: int
+      disable_auto_suspend:
+        description: Turn off auto suspend for Virtual Warehouse.
+        type: bool
+      hive_desired_free_capacity:
+        description:
+          - Set Desired free capacity for Hive Virtual Wearhouses.
+          - Either I(hive_scale_wait_time_seconds) or I(hive_desired_free_capacity) can be provided.
+        type: int
+      hive_scale_wait_time_seconds:
+        description:
+          - Set wait time before a scale event happens for Hive Virtual Wearhouses.
+          - Either I(hive_scale_wait_time_seconds) or I(hive_desired_free_capacity) can be provided.
+        type: int
+      impala_scale_down_delay_seconds:
+        description:
+          - Scale down threshold in seconds for Impala Virtual Wearhouses.
+        type: int
+      impala_scale_up_delay_seconds:
+        description:
+          - Scale up threshold in seconds for Impala Virtual Wearhouses.
+        type: int
+      pod_config_name:
+        description:
+          - Name of the pod configuration.
+        type: str
   common_configs: 
     description: Configurations that are applied to every application in the Virtual Warehouse service.
     type: dict
@@ -162,7 +197,16 @@ options:
   enable_sso:
     description: Flag to enable Single Sign-On (SSO) for the Virtual Warehouse.
     type: bool
-    default: False    
+    default: False
+  enable_unified_analytics:
+    description: 
+      - Flag to enable Unified Analytics for the Virtual Warehouse.
+      - This can only be specified in the case of Impala Virtual Warehouses.
+    type: bool
+  enable_platform_jwt_auth:
+    description:
+      - Flag to configure the Virtual Warehouse to support JWTs issues by the CDP JWT token provider.
+    type: bool
   tags:
     description: Key-value tags associated with the Virtual Warehouse cloud provider resources.
     type: dict
@@ -324,8 +368,6 @@ class DwVirtualWarehouse(CdpModule):
         self.type = self._get_param('type')
         self.name = self._get_param('name')
         self.template = self._get_param('template')
-        self.autoscaling_min_nodes = self._get_param('autoscaling_min_nodes')
-        self.autoscaling_max_nodes = self._get_param('autoscaling_max_nodes')
         self.common_configs = self._get_param('common_configs')
         self.application_configs = self._get_param('application_configs')
         self.ldap_groups = self._get_param('ldap_groups')
@@ -335,6 +377,26 @@ class DwVirtualWarehouse(CdpModule):
         self.wait = self._get_param('wait')
         self.delay = self._get_param('delay')
         self.timeout = self._get_param('timeout')
+        self.enable_unified_analytics = self._get_param(
+            'enable_unified_analytics')
+        self.enable_platform_jwt_auth = self._get_param(
+            'enable_platform_jwt_auth')
+        # Autoscaling nested parameters
+        autoscaling_params = self._get_param('autoscaling')
+        self.autoscaling_min_nodes = autoscaling_params['min_nodes']
+        self.autoscaling_max_nodes = autoscaling_params['max_nodes']
+        self.autoscaling_auto_suspend_timeout_seconds = autoscaling_params[
+            'auto_suspend_timeout_seconds']
+        self.autoscaling_disable_auto_suspend = autoscaling_params['disable_auto_suspend']
+        self.autoscaling_hive_desired_free_capacity = autoscaling_params[
+            'hive_desired_free_capacity']
+        self.autoscaling_hive_scale_wait_time_seconds = autoscaling_params[
+            'hive_scale_wait_time_seconds']
+        self.autoscaling_impala_scale_down_delay_seconds = autoscaling_params[
+            'impala_scale_down_delay_seconds']
+        self.autoscaling_impala_scale_up_delay_seconds = autoscaling_params[
+            'impala_scale_up_delay_seconds']
+        self.autoscaling_pod_config_name = autoscaling_params['pod_config_name']
 
         # Initialize return values
         self.virtual_warehouse = {}
@@ -352,10 +414,12 @@ class DwVirtualWarehouse(CdpModule):
             vws = self.cdpy.dw.list_vws(cluster_id=self.cluster_id)
             for vw in vws:
                 if self.name is not None and vw['name'] == self.name:
-                    self.target = self.cdpy.dw.describe_vw(cluster_id=self.cluster_id, vw_id=vw['id'])
+                    self.target = self.cdpy.dw.describe_vw(
+                        cluster_id=self.cluster_id, vw_id=vw['id'])
         else:
-            self.target = self.cdpy.dw.describe_vw(cluster_id=self.cluster_id, vw_id=self.warehouse_id)
-        
+            self.target = self.cdpy.dw.describe_vw(
+                cluster_id=self.cluster_id, vw_id=self.warehouse_id)
+
         if self.target is not None:
             # Begin Virtual Warehouse Exists
             if self.state == 'absent':
@@ -364,42 +428,49 @@ class DwVirtualWarehouse(CdpModule):
                 else:
                     # Begin Drop
                     if self.target['status'] not in self.cdpy.sdk.REMOVABLE_STATES:
-                        self.module.fail_json(msg="Virtual Warehouse not in valid state for Delete operation: %s" % 
+                        self.module.fail_json(msg="Virtual Warehouse not in valid state for Delete operation: %s" %
                                               self.target['status'])
                     else:
-                        _ = self.cdpy.dw.delete_vw(cluster_id=self.cluster_id, vw_id=self.target['id'])
+                        _ = self.cdpy.dw.delete_vw(
+                            cluster_id=self.cluster_id, vw_id=self.target['id'])
                         self.changed = True
                         if self.wait:
                             self.cdpy.sdk.wait_for_state(
                                 describe_func=self.cdpy.dw.describe_vw,
-                                params=dict(cluster_id=self.cluster_id, vw_id=self.target['id']),
+                                params=dict(cluster_id=self.cluster_id,
+                                            vw_id=self.target['id']),
                                 field=None, delay=self.delay, timeout=self.timeout
                             )
                         else:
-                            self.cdpy.sdk.sleep(self.delay)  # Wait for consistency sync
+                            # Wait for consistency sync
+                            self.cdpy.sdk.sleep(self.delay)
                             self.virtual_warehouse = self.cdpy.dw.describe_vw(
                                 cluster_id=self.cluster_id, vw_id=self.target['id']
                             )
                     # End Drop
             elif self.state == 'present':
                 # Begin Config check
-                self.module.warn("Virtual Warehouse already present and reconciliation is not yet implemented")
+                self.module.warn(
+                    "Virtual Warehouse already present and reconciliation is not yet implemented")
                 if self.wait and not self.module.check_mode:
                     self.target = self.cdpy.sdk.wait_for_state(
                         describe_func=self.cdpy.dw.describe_vw,
-                        params=dict(cluster_id=self.cluster_id, vw_id=self.target['id']),
-                        state=self.cdpy.sdk.STARTED_STATES + self.cdpy.sdk.STOPPED_STATES, delay=self.delay, 
+                        params=dict(cluster_id=self.cluster_id,
+                                    vw_id=self.target['id']),
+                        state=self.cdpy.sdk.STARTED_STATES + self.cdpy.sdk.STOPPED_STATES, delay=self.delay,
                         timeout=self.timeout
                     )
                 self.virtual_warehouse = self.target
                 # End Config check
             else:
-                self.module.fail_json(msg="State %s is not valid for this module" % self.state)
+                self.module.fail_json(
+                    msg="State %s is not valid for this module" % self.state)
             # End Virtual Warehouse Exists
         else:
             # Begin Virtual Warehouse Not Found
             if self.state == 'absent':
-                self.module.warn("Virtual Warehouse is already absent in Cluster %s" % self.cluster_id)
+                self.module.warn(
+                    "Virtual Warehouse is already absent in Cluster %s" % self.cluster_id)
             elif self.state == 'present':
                 if not self.module.check_mode:
                     vw_id = self.cdpy.dw.create_vw(cluster_id=self.cluster_id,
@@ -407,22 +478,34 @@ class DwVirtualWarehouse(CdpModule):
                                                    template=self.template,
                                                    autoscaling_min_cluster=self.autoscaling_min_nodes,
                                                    autoscaling_max_cluster=self.autoscaling_max_nodes,
+                                                   autoscaling_auto_suspend_timeout_seconds=self.autoscaling_auto_suspend_timeout_seconds,
+                                                   autoscaling_disable_auto_suspend=self.autoscaling_disable_auto_suspend,
+                                                   autoscaling_hive_desired_free_capacity=self.autoscaling_hive_desired_free_capacity,
+                                                   autoscaling_hive_scale_wait_time_seconds=self.autoscaling_hive_scale_wait_time_seconds,
+                                                   autoscaling_impala_scale_down_delay_seconds=self.autoscaling_impala_scale_down_delay_seconds,
+                                                   autoscaling_impala_scale_up_delay_seconds=self.autoscaling_impala_scale_up_delay_seconds,
+                                                   autoscaling_pod_config_name=self.autoscaling_pod_config_name,
                                                    common_configs=self.common_configs,
                                                    application_configs=self.application_configs,
                                                    ldap_groups=self.ldap_groups, enable_sso=self.enable_sso,
+                                                   enable_unified_analytics=self.enable_unified_analytics,
+                                                   enable_platform_jwt_auth=self.enable_platform_jwt_auth,
                                                    tags=self.tags)
                     self.changed = True
                     if self.wait:
                         completed_states = self.cdpy.sdk.STARTED_STATES + self.cdpy.sdk.STOPPED_STATES
                         self.virtual_warehouse = self.cdpy.sdk.wait_for_state(
                             describe_func=self.cdpy.dw.describe_vw,
-                            params=dict(cluster_id=self.cluster_id, vw_id=vw_id),
+                            params=dict(
+                                cluster_id=self.cluster_id, vw_id=vw_id),
                             state=completed_states, delay=self.delay, timeout=self.timeout
                         )
                     else:
-                        self.virtual_warehouse = self.cdpy.dw.describe_vw(cluster_id=self.cluster_id, vw_id=vw_id)
+                        self.virtual_warehouse = self.cdpy.dw.describe_vw(
+                            cluster_id=self.cluster_id, vw_id=vw_id)
             else:
-                self.module.fail_json(msg="State %s is not valid for this module" % self.state)
+                self.module.fail_json(
+                    msg="State %s is not valid for this module" % self.state)
             # End Virtual Warehouse Not Found
 
 
@@ -434,9 +517,22 @@ def main():
             catalog_id=dict(type='str', aliases=['dbc_id']),
             type=dict(type='str'),
             name=dict(type='str'),
-            template=dict(type='str', choices=['xsmall', 'small', 'medium', 'large']),
-            autoscaling_min_nodes=dict(type='int'),
-            autoscaling_max_nodes=dict(type='int'),
+            template=dict(type='str', choices=[
+                          'xsmall', 'small', 'medium', 'large']),
+            autoscaling=dict(
+                type='dict',
+                options=dict(
+                    min_nodes=dict(type='int'),
+                    max_nodes=dict(type='int'),
+                    auto_suspend_timeout_seconds=dict(type='int'),
+                    disable_auto_suspend=dict(type='bool'),
+                    hive_desired_free_capacity=dict(type='int'),
+                    hive_scale_wait_time_seconds=dict(type='int'),
+                    impala_scale_down_delay_seconds=dict(type='int'),
+                    impala_scale_up_delay_seconds=dict(type='int'),
+                    pod_config_name=dict(type='str')
+                )
+            ),
             common_configs=dict(type='dict', options=dict(
                 configBlocks=dict(type='list', elements='dict', options=dict(
                     id=dict(type='str'),
@@ -453,10 +549,14 @@ def main():
             ldap_groups=dict(type='list'),
             enable_sso=dict(type='bool', default=False),
             tags=dict(type='dict'),
-            state=dict(type='str', choices=['present', 'absent'], default='present'),
+            state=dict(type='str', choices=[
+                       'present', 'absent'], default='present'),
             wait=dict(type='bool', default=True),
             delay=dict(type='int', aliases=['polling_delay'], default=15),
-            timeout=dict(type='int', aliases=['polling_timeout'], default=3600)
+            timeout=dict(type='int', aliases=[
+                         'polling_timeout'], default=3600),
+            enable_unified_analytics=dict(type='bool'),
+            enable_platform_jwt_auth=dict(type='bool')
         ),
         required_if=[
             ['state', 'absent', ['warehouse_id']],
@@ -466,7 +566,8 @@ def main():
     )
 
     result = DwVirtualWarehouse(module)
-    output = dict(changed=result.changed, virtual_warehouse=result.virtual_warehouse)
+    output = dict(changed=result.changed,
+                  virtual_warehouse=result.virtual_warehouse)
 
     if result.debug:
         output.update(sdk_out=result.log_out, sdk_out_lines=result.log_lines)
