@@ -74,57 +74,64 @@ options:
       - Required if I(state=present) and the I(env) is deployed to AWS.
     type: list
     elements: str
-  az_subnet:
+  azure:
     description:
-      - The Azure Subnet Name.
-      - Required if I(state=present) and the I(env) is deployed to Azure.
-    type: str
-  az_enable_az:
-    description: 
-      - Flag to enable Availability Zone mode.
-      - Required if I(state=present) and the I(env) is deployed to Azure.
-    type: bool
-  az_managed_identity:
-    description:
-      - Resource ID of the managed identity used by AKS.
-      - Required if I(state=present) and the I(env) is deployed to Azure.
-    type: str
-  az_enable_private_aks:
-    description:
-      - Flag to enable Azure Private AKS mode.
-    type: bool
-  az_enable_private_sql:
-    description:
-      - Flag to enable private SQL for the cluster deployment.
-    type: bool  
-  az_enable_spot_instances:
-    description:
-      - Flag to enable spot instances for Virtual warehouses.
-    type: bool
-  az_log_analytics_workspace_id:
-    description:
-      - Workspace ID for Azure log analytics.
-      - Used to monitor the Azure Kubernetes Service (AKS) cluster.
-    type: str  
-  az_network_outbound_type:
-    description:
-      - Network outbound type. 
-      - This setting controls the egress traffic for cluster nodes in Azure Kubernetes Service
-    type: str
-    choices:
-      - LoadBalancer
-      - UserAssignedNATGateway
-      - UserDefinedRouting
-  az_aks_private_dns_zone:
-    description:
-      - ID for the private DNS zone used by AKS.
-    type: str
-  az_compute_instance_types:
-    description:
-      - List of Azure Compute Instance Types that the AKS environment is restricted to use.
-      - Only a single instance type can be listed.
-    type: list
-    elements: str
+      - Options for activating an Azure CDW Cluster
+    type: dict
+    elements: dict
+    required: False
+    suboptions:
+      subnet:
+        description:
+          - The Azure Subnet Name.
+          - Required if I(state=present) and the I(env) is deployed to Azure.
+        type: str
+      enable_az:
+        description: 
+          - Flag to enable Availability Zone mode.
+          - Required if I(state=present) and the I(env) is deployed to Azure.
+        type: bool
+      managed_identity:
+        description:
+          - Resource ID of the managed identity used by AKS.
+          - Required if I(state=present) and the I(env) is deployed to Azure.
+        type: str
+      enable_private_aks:
+        description:
+          - Flag to enable Azure Private AKS mode.
+        type: bool
+      enable_private_sql:
+        description:
+          - Flag to enable private SQL for the cluster deployment.
+        type: bool  
+      enable_spot_instances:
+        description:
+          - Flag to enable spot instances for Virtual warehouses.
+        type: bool
+      log_analytics_workspace_id:
+        description:
+          - Workspace ID for Azure log analytics.
+          - Used to monitor the Azure Kubernetes Service (AKS) cluster.
+        type: str  
+      network_outbound_type:
+        description:
+          - Network outbound type. 
+          - This setting controls the egress traffic for cluster nodes in Azure Kubernetes Service
+        type: str
+        choices:
+          - LoadBalancer
+          - UserAssignedNATGateway
+          - UserDefinedRouting
+      aks_private_dns_zone:
+        description:
+          - ID for the private DNS zone used by AKS.
+        type: str
+      compute_instance_types:
+        description:
+          - List of Azure Compute Instance Types that the AKS environment is restricted to use.
+          - Only a single instance type can be listed.
+        type: list
+        elements: str
   state:
     description: The state of the Data Warehouse Cluster
     type: str
@@ -171,9 +178,10 @@ EXAMPLES = r'''
 # Request Azure Cluster creation
 - cloudera.cloud.dw_cluster:
     env_crn: crn:cdp:environments...
-    az_subnet: my-subnet-name
-    az_enable_az: yes
-    az_managed_identity: my-aks-managed-identity
+    azure:
+      subnet: my-subnet-name
+      enable_az: yes
+      managed_identity: my-aks-managed-identity
 
 # Request AWS Cluster Creation
 - cloudera.cloud.dw_cluster:
@@ -264,16 +272,6 @@ class DwCluster(CdpModule):
         self.env = self._get_param('env')
         self.overlay = self._get_param('overlay')
         self.private_load_balancer = self._get_param('private_load_balancer')
-        self.az_subnet = self._get_param('az_subnet')
-        self.az_enable_az = self._get_param('az_enable_az')
-        self.az_managed_identity = self._get_param('az_managed_identity')
-        self.az_enable_private_aks = self._get_param('az_enable_private_aks')
-        self.az_enable_private_sql = self._get_param('az_enable_private_sql')
-        self.az_enable_spot_instances = self._get_param('az_enable_spot_instances')
-        self.az_log_analytics_workspace_id = self._get_param('az_log_analytics_workspace_id')
-        self.az_network_outbound_type = self._get_param('az_network_outbound_type')
-        self.az_aks_private_dns_zone = self._get_param('az_aks_private_dns_zone')
-        self.az_compute_instance_types = self._get_param('az_compute_instance_types')
         self.aws_lb_subnets = self._get_param('aws_lb_subnets')
         self.aws_worker_subnets = self._get_param('aws_worker_subnets')
         self.force = self._get_param('force')
@@ -281,6 +279,21 @@ class DwCluster(CdpModule):
         self.wait = self._get_param('wait')
         self.delay = self._get_param('delay')
         self.timeout = self._get_param('timeout')
+        # Azure nested parameters
+        azure_params = self._get_param('azure')
+        self.az_compute_instance_types = azure_params['compute_instance_types']
+        self.az_enable_az = azure_params['enable_az']
+        self.az_enable_private_aks = azure_params['enable_private_aks']
+        self.az_enable_private_sql = azure_params['enable_private_sql']
+        self.az_enable_spot_instances = azure_params['enable_spot_instances']
+        self.az_log_analytics_workspace_id = azure_params['log_analytics_workspace_id']
+        self.az_network_outbound_type = azure_params['network_outbound_type']
+        self.az_aks_private_dns_zone = azure_params['aks_private_dns_zone']
+        self.az_subnet = azure_params['subnet']
+        self.az_managed_identity = azure_params['managed_identity']
+
+      # TODO: Handle required_together of nested Azure parameters
+      # ['az_subnet', 'az_enable_az', 'az_managed_identity'],
 
         # Initialize return values
         self.cluster = {}
@@ -390,16 +403,21 @@ def main():
             env=dict(type='str', aliases=['environment', 'env_crn']),
             overlay=dict(type='bool', default=False),
             private_load_balancer=dict(type='bool', default=False),
-            az_subnet=dict(type='str'),
-            az_enable_az=dict(type='bool'),
-            az_managed_identity=dict(type='str'),
-            az_enable_private_aks=dict(type='bool'),
-            az_enable_private_sql=dict(type='bool'),
-            az_enable_spot_instances=dict(type='bool'),
-            az_log_analytics_workspace_id=dict(type='str'),
-            az_network_outbound_type=dict(type='str', choices=['LoadBalancer','UserAssignedNATGateway','UserDefinedRouting']),
-            az_aks_private_dns_zone=dict(type='str'),
-            az_compute_instance_types=dict(type='list'),
+            azure=dict(
+                type='dict',
+                options=dict(
+                  subnet=dict(type='str'),
+                  enable_az=dict(type='bool'),
+                  managed_identity=dict(type='str'),
+                  enable_private_aks=dict(type='bool'),
+                  enable_private_sql=dict(type='bool'),
+                  enable_spot_instances=dict(type='bool'),
+                  log_analytics_workspace_id=dict(type='str'),
+                  network_outbound_type=dict(type='str', choices=['LoadBalancer','UserAssignedNATGateway','UserDefinedRouting']),
+                  aks_private_dns_zone=dict(type='str'),
+                  compute_instance_types=dict(type='list')
+                )
+            ),
             aws_lb_subnets=dict(type='list', aliases=['aws_public_subnets']),
             aws_worker_subnets=dict(type='list', aliases=['aws_private_subnets']),
             state=dict(type='str', choices=['present', 'absent'], default='present'),
@@ -409,7 +427,7 @@ def main():
             timeout=dict(type='int', aliases=['polling_timeout'], default=3600)
         ),
         required_together=[
-            ['az_subnet', 'az_enable_az', 'az_managed_identity'],
+            # ['az_subnet', 'az_enable_az', 'az_managed_identity'],
             ['aws_lb_subnets', 'aws_worker_subnets']
         ],
         required_if=[
