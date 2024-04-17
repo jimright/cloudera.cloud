@@ -280,17 +280,19 @@ class DwCluster(CdpModule):
         self.delay = self._get_param('delay')
         self.timeout = self._get_param('timeout')
         # Azure nested parameters
-        azure_params = self._get_param('azure')
-        self.az_compute_instance_types = azure_params['compute_instance_types']
-        self.az_enable_az = azure_params['enable_az']
-        self.az_enable_private_aks = azure_params['enable_private_aks']
-        self.az_enable_private_sql = azure_params['enable_private_sql']
-        self.az_enable_spot_instances = azure_params['enable_spot_instances']
-        self.az_log_analytics_workspace_id = azure_params['log_analytics_workspace_id']
-        self.az_network_outbound_type = azure_params['network_outbound_type']
-        self.az_aks_private_dns_zone = azure_params['aks_private_dns_zone']
-        self.az_subnet = azure_params['subnet']
-        self.az_managed_identity = azure_params['managed_identity']
+        azure_params = dict()
+        if self._get_param('azure') is not None:       
+          azure_params = self._get_param('azure')
+        self.az_compute_instance_types = azure_params.get('compute_instance_types')
+        self.az_enable_az = azure_params.get('enable_az')
+        self.az_enable_private_aks = azure_params.get('enable_private_aks')
+        self.az_enable_private_sql = azure_params.get('enable_private_sql')
+        self.az_enable_spot_instances = azure_params.get('enable_spot_instances')
+        self.az_log_analytics_workspace_id = azure_params.get('log_analytics_workspace_id')
+        self.az_network_outbound_type = azure_params.get('network_outbound_type')
+        self.az_aks_private_dns_zone = azure_params.get('aks_private_dns_zone')
+        self.az_subnet = azure_params.get('subnet')
+        self.az_managed_identity = azure_params.get('managed_identity')
 
       # TODO: Handle required_together of nested Azure parameters
       # ['az_subnet', 'az_enable_az', 'az_managed_identity'],

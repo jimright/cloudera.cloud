@@ -190,6 +190,35 @@ options:
                   json:
                     description: JSON type configuration.
                     type: str    
+  impala_ha:
+    description:
+      - High Availability settings for a Impala Virtual Warehouse
+    type: dict
+    elements: dict
+    required: False
+    suboptions:      
+      enable_catalog_high_availability:
+        description: Enables a backup instance for Impala catalog to ensure high availability.
+        type: bool
+      enable_shutdown_of_coordinator:
+        description: 
+          - Enables a shutdown of the coordinator. 
+          - If Unified Analytics is enabled, then this setting is explicitly disabled and should not be provided.
+        type: bool
+      high_availability_mode:
+        description: 
+          - Set High Availability mode. 
+        type: str
+        choices:
+          - ACTIVE_PASSIVE
+          - ACTIVE_ACTIVE
+          - DISABLED
+      num_of_active_coordinators:
+        description: The number of active coordinators.
+        type: int          
+      shutdown_of_coordinator_delay_seconds:
+        description: Delay in seconds before the shutdown of coordinator event happens.
+        type: int          
   ldap_groups:
     description: LDAP Groupnames to enabled for authentication to the Virtual Warehouse.
     type: list
@@ -253,8 +282,9 @@ EXAMPLES = r'''
     name: example-virtual-warehouse
     type: hive
     template: xsmall
-    autoscaling_min_nodes: 3
-    autoscaling_max_nodes: 19
+    autoscaling:
+      min_nodes: 3
+      max_nodes: 19
     tags:
        some_key: "some value"
     enable_sso: true
@@ -382,21 +412,27 @@ class DwVirtualWarehouse(CdpModule):
         self.enable_platform_jwt_auth = self._get_param(
             'enable_platform_jwt_auth')
         # Autoscaling nested parameters
-        autoscaling_params = self._get_param('autoscaling')
-        self.autoscaling_min_nodes = autoscaling_params['min_nodes']
-        self.autoscaling_max_nodes = autoscaling_params['max_nodes']
-        self.autoscaling_auto_suspend_timeout_seconds = autoscaling_params[
-            'auto_suspend_timeout_seconds']
-        self.autoscaling_disable_auto_suspend = autoscaling_params['disable_auto_suspend']
-        self.autoscaling_hive_desired_free_capacity = autoscaling_params[
-            'hive_desired_free_capacity']
-        self.autoscaling_hive_scale_wait_time_seconds = autoscaling_params[
-            'hive_scale_wait_time_seconds']
-        self.autoscaling_impala_scale_down_delay_seconds = autoscaling_params[
-            'impala_scale_down_delay_seconds']
-        self.autoscaling_impala_scale_up_delay_seconds = autoscaling_params[
-            'impala_scale_up_delay_seconds']
-        self.autoscaling_pod_config_name = autoscaling_params['pod_config_name']
+        autoscaling_params = dict()
+        if self._get_param('autoscaling') is not None:       
+          autoscaling_params = self._get_param('autoscaling')
+        self.autoscaling_min_nodes = autoscaling_params.get('min_nodes')
+        self.autoscaling_max_nodes = autoscaling_params.get('max_nodes')
+        self.autoscaling_auto_suspend_timeout_seconds = autoscaling_params.get('auto_suspend_timeout_seconds')
+        self.autoscaling_disable_auto_suspend = autoscaling_params.get('disable_auto_suspend')
+        self.autoscaling_hive_desired_free_capacity = autoscaling_params.get('hive_desired_free_capacity')
+        self.autoscaling_hive_scale_wait_time_seconds = autoscaling_params.get('hive_scale_wait_time_seconds')
+        self.autoscaling_impala_scale_down_delay_seconds = autoscaling_params.get('impala_scale_down_delay_seconds')
+        self.autoscaling_impala_scale_up_delay_seconds = autoscaling_params.get('impala_scale_up_delay_seconds')
+        self.autoscaling_pod_config_name = autoscaling_params.get('pod_config_name')
+        # impala_ha nested parameters
+        impala_ha_params = dict()
+        if self._get_param('impala_ha') is not None:
+          impala_ha_params = self._get_param('impala_ha')
+        self.impala_ha_enable_catalog_high_availability = impala_ha_params.get('enable_catalog_high_availability')
+        self.impala_ha_enable_shutdown_of_coordinator = impala_ha_params.get('enable_shutdown_of_coordinator')
+        self.impala_ha_high_availability_mode = impala_ha_params.get('high_availability_mode')
+        self.impala_ha_num_of_active_coordinators = impala_ha_params.get('num_of_active_coordinators')
+        self.impala_ha_shutdown_of_coordinator_delay_seconds = impala_ha_params.get('shutdown_of_coordinator_delay_seconds')
 
         # Initialize return values
         self.virtual_warehouse = {}
@@ -485,6 +521,11 @@ class DwVirtualWarehouse(CdpModule):
                                                    autoscaling_impala_scale_down_delay_seconds=self.autoscaling_impala_scale_down_delay_seconds,
                                                    autoscaling_impala_scale_up_delay_seconds=self.autoscaling_impala_scale_up_delay_seconds,
                                                    autoscaling_pod_config_name=self.autoscaling_pod_config_name,
+                                                   impala_ha_enable_catalog_high_availability=self.impala_ha_enable_catalog_high_availability,
+                                                   impala_ha_enable_shutdown_of_coordinator=self.impala_ha_enable_shutdown_of_coordinator,
+                                                   impala_ha_high_availability_mode=self.impala_ha_high_availability_mode,
+                                                   impala_ha_num_of_active_coordinators=self.impala_ha_num_of_active_coordinators,
+                                                   impala_ha_shutdown_of_coordinator_delay_seconds=self.impala_ha_shutdown_of_coordinator_delay_seconds,
                                                    common_configs=self.common_configs,
                                                    application_configs=self.application_configs,
                                                    ldap_groups=self.ldap_groups, enable_sso=self.enable_sso,
@@ -531,6 +572,16 @@ def main():
                     impala_scale_down_delay_seconds=dict(type='int'),
                     impala_scale_up_delay_seconds=dict(type='int'),
                     pod_config_name=dict(type='str')
+                )
+            ),
+            impala_ha=dict(
+                type='dict',
+                options=dict(
+                  enable_catalog_high_availability=dict(type='bool'),
+                  enable_shutdown_of_coordinator=dict(type='bool'),
+                  high_availability_mode=dict(type='str', choices=['ACTIVE_PASSIVE', 'ACTIVE_ACTIVE', 'DISABLED']),
+                  num_of_active_coordinators=dict(type='int'),
+                  shutdown_of_coordinator_delay_seconds=dict(type='int')
                 )
             ),
             common_configs=dict(type='dict', options=dict(
