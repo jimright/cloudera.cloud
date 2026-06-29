@@ -42,6 +42,7 @@ hatch run docs:build  ## Generate API docs
 5. **Collection path**: For `ansible-doc` and doc building, collection must be in `ANSIBLE_COLLECTIONS_PATHS`
 6. **Integration tests**: Need environment variables for service endpoints — tests will be skipped if not set via the `env_context` fixture
 7. **Pre-commit hooks**: Run automatically on commit — use `hatch run lint` to run manually on all files
+8. **CDPY is being removed**: Some older modules still use `self.cdpy.*` calls. These are being migrated to direct API calls via `CdpClient` subclasses. Do not add new `cdpy` usage — always use the direct API pattern. See the [CDPY to Direct API Migration](#cdpy-to-direct-api-migration) section for details.
 
 ### Development Workflow
 1. Write unit tests in `tests/unit/plugins/<plugin_type>/<plugin_family>/<plugin_name>/`
@@ -403,3 +404,41 @@ After updating plugin docs:
 ansible-doc -t <plugin type> cloudera.cloud.<plugin name>  ## Validate parsing
 hatch run docs:build  ## Regenerate RST docs
 ```
+
+## CDPY to Direct API Migration
+
+Some pre-existing modules were originally written using the `cdpy` library (via `self.cdpy.*` calls). These are being progressively migrated to use direct API calls through `CdpClient` subclasses. Do not introduce new `cdpy` usage.
+
+### Identifying CDPY Usage
+
+Search for the following patterns in any module being modified:
+
+```python
+self.cdpy.sdk.call(...)         ## Generic SDK dispatch — replace with a typed client method
+self.cdpy.<service>.<method>()  ## Service-specific call — replace with CdpClient subclass method
+self.cdpy.sdk.REMOVABLE_STATES  ## State constant — define in cdp_<service>.py or cdp_common.py
+self.cdpy.sdk.TERMINATION_STATES
+self.cdpy.sdk.wait_for_state()  ## Polling utility — replace with a wait_for_state helper
+```
+
+### Migration Steps
+
+When tasked with removing `cdpy` from an existing module, follow this order:
+
+1. **Audit**: Grep the module for all `self.cdpy` references and record each one (method, constant, or utility).
+2. **State constants**: If the module references `cdpy.sdk.REMOVABLE_STATES` or `cdpy.sdk.TERMINATION_STATES`, define equivalent constants in the service's `cdp_<service>.py` module utils file (e.g., `REMOVABLE_STATES = ["installation:finished"]`). Verify actual state values against the CDP API documentation or existing integration tests before defining them.
+3. **New client methods**: For each `self.cdpy.sdk.call("<service>", "<method>", ...)` or `self.cdpy.<service>.<method>()` call, add a corresponding typed method to the `Cdp<Service>Client` class in `plugins/module_utils/cdp_<service>.py`. Follow the existing client method patterns (type hints, `squelch` error handling, `_normalize_payload` usage).
+4. **Wait utility**: Replace `self.cdpy.sdk.wait_for_state(...)` with a `wait_for_state` helper. Options in order of preference:
+   - Add as a method on the `Cdp<Service>Client` class if service-specific.
+   - Add as a shared utility in `plugins/module_utils/cdp_common.py` if broadly reusable.
+   - The helper must: accept a describe callable, poll at a configurable interval, time out after a configurable duration, and check for one or more target state values in the response.
+5. **Update the module**: Replace each `self.cdpy.*` call in `plugins/modules/<module>.py` with the new client method or constant. Remove the `cdpy` import once all references are replaced.
+6. **Tests**: Add or update unit tests to mock the new client methods. Add or update integration tests to exercise the migrated paths against the live API.
+7. **Validate**: Run the standard validation suite — lint, ansible-doc, hatch test, docs build.
+
+### Key Considerations
+
+- **Normalization**: CDPY silently dropped `None` values; replicate this with `_normalize_payload()` before passing kwargs to the API client.
+- **CRN vs name**: Modules may accept both a resource CRN and a name/environment pair. Ensure new client methods handle both identifiers.
+- **Error handling**: Use the `squelch` parameter on client calls (e.g., `{404: [], 500: {}}`) to replicate the graceful error suppression that CDPY provided.
+- **Do not change behaviour**: The migration must be a like-for-like replacement. Do not alter module idempotency logic, argument specs, or return values during the migration.
